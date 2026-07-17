@@ -2,7 +2,7 @@ ultralytics
 torch
 torchvision
 torchreid==0.2.5
-opencv-python
+opencv-python-headless
 numpy
 scipy
 scikit-learn
@@ -13,6 +13,5 @@ cython
 gdown
 tqdm
 PyMySQL
-#python-dotenv
-python-dotenv-headless
+python-dotenv
 streamlit
