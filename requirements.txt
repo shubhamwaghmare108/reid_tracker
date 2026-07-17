@@ -13,5 +13,6 @@ cython
 gdown
 tqdm
 PyMySQL
-python-dotenv
+#python-dotenv
+python-dotenv headless
 streamlit
