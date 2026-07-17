@@ -10,6 +10,7 @@ class Match:
     name: str
     score: float
     known: bool
+    candidate_name: str = "Unknown"
 
 
 class CosineMatcher:
@@ -18,7 +19,8 @@ class CosineMatcher:
 
     def match(self, embedding: np.ndarray) -> Match:
         if not self.gallery.names:
-            return Match("Unknown", 0.0, False)
+            return Match("Unknown", 0.0, False, "Unknown")
         scores = self.gallery.embeddings @ embedding
         index = int(np.argmax(scores)); score = float(scores[index])
-        return Match(self.gallery.names[index] if score >= self.threshold else "Unknown", score, score >= self.threshold)
+        candidate_name = self.gallery.names[index]
+        return Match(candidate_name if score >= self.threshold else "Unknown", score, score >= self.threshold, candidate_name)

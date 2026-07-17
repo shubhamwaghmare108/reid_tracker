@@ -4,16 +4,20 @@ import argparse
 from pathlib import Path
 import time
 import cv2
-from app.config.config import Settings
+from app.config.config import Settings, database_timestamp
 from app.database.database import Gallery
+from app.database.mysql_store import MySQLPresenceStore
 from app.detector.detector import PersonDetector
 from app.reid.reid import FeatureExtractor
-from app.services.matcher import CosineMatcher
+from app.services.matcher import CosineMatcher, Match
 from app.services.presence import PresenceTracker
 from app.utils.utils import crop_box, draw_label, draw_presence_panel
 
 
-def process_frame(frame, detector, extractor, matcher, cache, presence, elapsed: float = 0.0):
+def process_frame(
+    frame, detector, extractor, matcher, cache, presence, elapsed: float = 0.0,
+    known_retention_threshold: float = 0.45,
+):
     """Annotate a frame and account for known identities' camera presence."""
     tracks = detector.track(frame)
     resolved_tracks = []
@@ -21,7 +25,20 @@ def process_frame(frame, detector, extractor, matcher, cache, presence, elapsed:
         if track.track_id not in cache or cache[track.track_id][2] % 15 == 0:
             crop = crop_box(frame, track.box)
             if crop is not None:
-                try: cache[track.track_id] = (matcher.match(extractor.extract(crop)), track.box, 1)
+                try:
+                    fresh_match = matcher.match(extractor.extract(crop))
+                    previous_match = cache.get(track.track_id, (None, None, None))[0]
+                    # Keep a confirmed identity through weak distant/blurred
+                    # frames only when it remains the best gallery candidate.
+                    if (
+                        not fresh_match.known
+                        and previous_match is not None
+                        and previous_match.known
+                        and fresh_match.candidate_name == previous_match.name
+                        and fresh_match.score >= known_retention_threshold
+                    ):
+                        fresh_match = Match(previous_match.name, fresh_match.score, True, fresh_match.candidate_name)
+                    cache[track.track_id] = (fresh_match, track.box, 1)
                 except ValueError: continue
         elif track.track_id in cache:
             match, _, age = cache[track.track_id]; cache[track.track_id] = (match, track.box, age + 1)
@@ -31,7 +48,7 @@ def process_frame(frame, detector, extractor, matcher, cache, presence, elapsed:
 
     # Sets prevent duplicate entries/time when multiple tracks match one identity.
     known_names = {match.name for _, match in resolved_tracks if match.known}
-    presence.update(known_names, elapsed)
+    presence.update(known_names, elapsed, database_timestamp())
     for track, match in resolved_tracks:
         if match.known:
             draw_label(
@@ -47,6 +64,7 @@ def process_frame(frame, detector, extractor, matcher, cache, presence, elapsed:
 
 
 def run(source: str | int, settings: Settings, show: bool = False) -> Path:
+    started_at = database_timestamp()
     input_path = Path(str(source))
     if isinstance(source, str) and not input_path.is_file():
         raise FileNotFoundError(
@@ -65,12 +83,22 @@ def run(source: str | int, settings: Settings, show: bool = False) -> Path:
     print(f"Loaded {len(gallery.names)} identities from {settings.gallery_dir}")
     detector = PersonDetector(settings.detector_model, settings.confidence, settings.device)
     matcher, cache, presence = CosineMatcher(gallery, settings.match_threshold), {}, PresenceTracker()
+    store = MySQLPresenceStore(
+        settings.mysql_host, settings.mysql_port, settings.mysql_user,
+        settings.mysql_password, settings.mysql_database,
+    )
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     if image_mode:
         ok, frame = cap.read(); cap.release()
         if not ok: raise RuntimeError("Could not read image")
         output = settings.output_dir / f"{input_path.stem}_reid.jpg"
-        cv2.imwrite(str(output), process_frame(frame, detector, extractor, matcher, cache, presence)); return output
+        cv2.imwrite(str(output), process_frame(
+            frame, detector, extractor, matcher, cache, presence,
+            known_retention_threshold=settings.known_retention_threshold,
+        ))
+        store.save_run(source, started_at, database_timestamp(), presence.records, presence.events)
+        store.close()
+        return output
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0; width, height = int(cap.get(3)), int(cap.get(4))
     output = settings.output_dir / "reid_output.mp4"
     writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
@@ -85,11 +113,17 @@ def run(source: str | int, settings: Settings, show: bool = False) -> Path:
             timestamp = time.monotonic()
         elapsed = 0.0 if previous_timestamp is None else timestamp - previous_timestamp
         previous_timestamp = timestamp
-        annotated = process_frame(frame, detector, extractor, matcher, cache, presence, elapsed); writer.write(annotated)
+        annotated = process_frame(
+            frame, detector, extractor, matcher, cache, presence, elapsed,
+            settings.known_retention_threshold,
+        ); writer.write(annotated)
         if show:
             cv2.imshow("Person ReID", annotated)
             if cv2.waitKey(1) & 0xFF in (27, ord("q")): break
-    cap.release(); writer.release(); cv2.destroyAllWindows(); return output
+    cap.release(); writer.release(); cv2.destroyAllWindows()
+    store.save_run(source, started_at, database_timestamp(), presence.records, presence.events)
+    store.close()
+    return output
 
 
 if __name__ == "__main__":

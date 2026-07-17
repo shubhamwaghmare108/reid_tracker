@@ -12,3 +12,5 @@ lap
 cython
 gdown
 tqdm
+PyMySQL
+python-dotenv
