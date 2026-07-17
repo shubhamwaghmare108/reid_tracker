@@ -1,0 +1,45 @@
+"""Identity-level camera-presence accounting."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Presence:
+    total_seconds: float = 0.0
+    entries: int = 0
+    exits: int = 0
+
+
+@dataclass
+class PresenceTracker:
+    """Accumulate dwell time and IN/OUT events for recognized identities."""
+    absence_timeout: float = 1.0
+    records: dict[str, Presence] = field(default_factory=dict)
+    active_names: set[str] = field(default_factory=set)
+    missing_seconds: dict[str, float] = field(default_factory=dict)
+
+    def update(self, visible_names: set[str], elapsed: float) -> None:
+        """Advance time and record transitions since the previous frame."""
+        elapsed = max(0.0, elapsed)
+        # A logical visit stays active through short detector dropouts. This
+        # prevents one missed frame from becoming an artificial OUT/IN pair.
+        for name in self.active_names:
+            self.records[name].total_seconds += elapsed
+
+        for name in visible_names:
+            self.missing_seconds.pop(name, None)
+        for name in visible_names - self.active_names:
+            self.records.setdefault(name, Presence()).entries += 1
+            self.active_names.add(name)
+        for name in self.active_names - visible_names:
+            missing = self.missing_seconds.get(name, 0.0) + elapsed
+            if missing >= self.absence_timeout:
+                self.records[name].exits += 1
+                self.active_names.remove(name)
+                self.missing_seconds.pop(name, None)
+            else:
+                self.missing_seconds[name] = missing
+
+    def get(self, name: str) -> Presence:
+        return self.records[name]

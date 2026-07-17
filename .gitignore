@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pth
+*.pt
+*.onnx
+*.engine
+*.db
+*.sqlite3
+*.log
+output/
+logs/

@@ -1,0 +1,14 @@
+ultralytics
+torch
+torchvision
+torchreid==0.2.5
+opencv-python
+numpy
+scipy
+scikit-learn
+pillow
+filterpy
+lap
+cython
+gdown
+tqdm
