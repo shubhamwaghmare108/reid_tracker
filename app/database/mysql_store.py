@@ -66,8 +66,94 @@ class MySQLPresenceStore:
                 INDEX idx_presence_events_run_time (run_id, occurred_at)
                 )
             """)
+        self._ensure_column(cursor, "reid_runs", "deleted_at", "DATETIME NULL")
+        self._ensure_column(cursor, "person_presence", "deleted_at", "DATETIME NULL")
+        self._ensure_column(cursor, "person_presence_events", "deleted_at", "DATETIME NULL")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_reid_runs (
+                log_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                original_id BIGINT NOT NULL,
+                source VARCHAR(512) NOT NULL,
+                started_at DATETIME NOT NULL,
+                completed_at DATETIME NOT NULL,
+                deleted_at DATETIME NOT NULL,
+                archived_at DATETIME NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_person_presence (
+                log_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                original_id BIGINT NOT NULL,
+                run_id BIGINT NOT NULL,
+                person_name VARCHAR(255) NOT NULL,
+                total_seconds DECIMAL(12, 3) NOT NULL,
+                entries_count INT NOT NULL,
+                exits_count INT NOT NULL,
+                deleted_at DATETIME NOT NULL,
+                archived_at DATETIME NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_person_presence_events (
+                log_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                original_id BIGINT NOT NULL,
+                run_id BIGINT NOT NULL,
+                person_name VARCHAR(255) NOT NULL,
+                event_type ENUM('IN', 'OUT') NOT NULL,
+                occurred_at DATETIME NOT NULL,
+                deleted_at DATETIME NOT NULL,
+                archived_at DATETIME NOT NULL
+            )
+        """)
+        self._create_audit_triggers(cursor)
         self._connection.commit()
         cursor.close()
+
+    @staticmethod
+    def _ensure_column(cursor, table: str, column: str, definition: str) -> None:
+        cursor.execute(
+            """SELECT 1 FROM information_schema.columns
+               WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s""",
+            (table, column),
+        )
+        if cursor.fetchone() is None:
+            cursor.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+
+    @staticmethod
+    def _create_audit_triggers(cursor) -> None:
+        triggers = {
+            "archive_deleted_reid_run": """
+                CREATE TRIGGER archive_deleted_reid_run AFTER UPDATE ON reid_runs
+                FOR EACH ROW INSERT INTO deleted_reid_runs
+                (original_id, source, started_at, completed_at, deleted_at, archived_at)
+                SELECT NEW.id, NEW.source, NEW.started_at, NEW.completed_at, NEW.deleted_at, NOW()
+                WHERE OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
+            """,
+            "archive_deleted_presence": """
+                CREATE TRIGGER archive_deleted_presence AFTER UPDATE ON person_presence
+                FOR EACH ROW INSERT INTO deleted_person_presence
+                (original_id, run_id, person_name, total_seconds, entries_count, exits_count, deleted_at, archived_at)
+                SELECT NEW.id, NEW.run_id, NEW.person_name, NEW.total_seconds, NEW.entries_count,
+                       NEW.exits_count, NEW.deleted_at, NOW()
+                WHERE OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
+            """,
+            "archive_deleted_presence_event": """
+                CREATE TRIGGER archive_deleted_presence_event AFTER UPDATE ON person_presence_events
+                FOR EACH ROW INSERT INTO deleted_person_presence_events
+                (original_id, run_id, person_name, event_type, occurred_at, deleted_at, archived_at)
+                SELECT NEW.id, NEW.run_id, NEW.person_name, NEW.event_type, NEW.occurred_at,
+                       NEW.deleted_at, NOW()
+                WHERE OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
+            """,
+        }
+        for name, statement in triggers.items():
+            cursor.execute(
+                """SELECT 1 FROM information_schema.triggers
+                   WHERE trigger_schema = DATABASE() AND trigger_name = %s""",
+                (name,),
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(statement)
 
     def save_run(
         self,

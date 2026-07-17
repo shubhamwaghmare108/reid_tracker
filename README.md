@@ -54,6 +54,24 @@ $env:REID_TIMEZONE = "Asia/Kolkata"
 The tables are created automatically. Install the new dependency with
 `pip install -r requirements.txt`.
 
+## Dashboard
+
+Launch the Streamlit dashboard after processing a camera run:
+
+```powershell
+streamlit run streamlit_app.py
+```
+
+It reads MySQL and displays completed runs, per-person presence totals, and
+the detailed `IN`/`OUT` event timeline.
+
+Set `REID_ADMIN_PASSWORD` in `.env` to enable the password-protected **Admin**
+tab. It can enroll reference images for a known person and delete a completed
+run with its associated summaries and events. Run deletion is a soft delete:
+the records are marked deleted and MySQL triggers copy their original data to
+`deleted_reid_runs`, `deleted_person_presence`, and
+`deleted_person_presence_events`.
+
 Pipeline
 
 YOLO11

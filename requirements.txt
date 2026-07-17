@@ -14,3 +14,4 @@ gdown
 tqdm
 PyMySQL
 python-dotenv
+streamlit
