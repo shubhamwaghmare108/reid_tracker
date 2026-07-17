@@ -14,5 +14,5 @@ gdown
 tqdm
 PyMySQL
 #python-dotenv
-python-dotenv headless
+python-dotenv-headless
 streamlit
